@@ -1,10 +1,12 @@
 # mcp-server-inspector
 
-**在把一个 MCP 服务器接进你的 agent 之前，先搞清楚你到底知道它什么。**
+English | [中文](README.zh-CN.md)
 
-MCP 生态现在有十几万个服务器（见下方「生态数据与出处」），而决定装哪一个的依据，通常是一段 README。README 描述的是**意图**。当你把一个服务器接进持有你凭证的 agent 时，真正要紧的是它**跑起来会做什么**。这两件事不一致的频率足够高，所以唯一靠谱的办法是实测。
+**Before you wire an MCP server into your agent, make sure you actually know what you know about it.**
 
-`mcp-server-inspector` 做一件事：**真连上去，然后如实报告。**
+The MCP ecosystem now has well over a hundred thousand servers (see "Ecosystem data and sources" below), and the usual basis for picking one is a README. A README describes **intent**. When you plug a server into an agent that holds your credentials, what really matters is what it **does when it runs**. Those two diverge often enough that the only sound approach is to measure it.
+
+`mcp-server-inspector` does one thing: **connect to it for real, then report honestly.**
 
 ```bash
 npx mcp-server-inspector @modelcontextprotocol/server-filesystem
@@ -12,255 +14,255 @@ npx mcp-server-inspector @modelcontextprotocol/server-filesystem
 
 ---
 
-## 它是体检报告，不是目录
+## It's a health report, not a registry
 
-这一条要说在最前面，因为很容易被混为一谈。
+This needs to be said up front, because the two get conflated easily.
 
-| | 做什么 | 不做什么 |
+| | Does | Does not |
 |---|---|---|
-| **Registry（注册表）** | 收录、检索、分发服务器包 | 不告诉你这个包跑起来会怎样 |
-| **mcp-server-inspector** | 启动它、跟它握手、看它真实暴露什么、与它自己宣称的对照 | 不收录、不检索、不替你决定装哪个 |
+| **Registry** | Index, search, and distribute server packages | Tell you what a given package does when it runs |
+| **mcp-server-inspector** | Launch it, shake hands, see what it actually exposes, and compare that against what it claims | Index, search, or decide for you which one to install |
 
-Registry 回答「有哪些」，`mcp-server-inspector` 回答「这一个到底是什么情况」。两者是互补的，不是竞争关系。
+A registry answers "what's out there"; `mcp-server-inspector` answers "what is the situation with this one." The two are complementary, not competitive.
 
-它也不是安全审计。理由在下面「我们没测什么」里说清楚了——那一节是这份文档里最重要的一节。
+It is also not a security audit. The reasoning is spelled out in "What we don't test" below — that section is the most important one in this document.
 
 ---
 
-## 它做三件事
+## It does three things
 
-### 1. 真连上去（不是读文档猜）
+### 1. Connect for real (not guess from docs)
 
-按 stdio 传输规范走完整握手：
+Speaks the full stdio handshake:
 
 ```
-spawn 子进程
-  → initialize                                        （协议版本 2025-11-25）
+spawn child process
+  → initialize                                        (protocol version 2025-11-25)
   → notifications/initialized
-  → tools/list                                        （跟着 nextCursor 翻页翻到底）
-  → 终止子进程
+  → tools/list                                        (follow nextCursor until the last page)
+  → terminate child process
 ```
 
-翻页这件事本身就是必须做对的：只读第一页会**少报**工具数，而「少报」恰恰是本工具存在的理由，所以它自己绝不能犯这个错。
+Following the pagination matters in its own right: reading only the first page **under-reports** the tool count, and "under-reporting" is precisely why this tool exists, so it must never make that mistake itself.
 
-### 2. 读它的静态声明
+### 2. Read its static declarations
 
-读 `package.json` 和 `README`：依赖数量、**安装期脚本**、许可证、仓库地址、发版时间、维护者数量。
+Reads `package.json` and the `README`: dependency count, **install-time scripts**, license, repo URL, release date, number of maintainers.
 
-安装期脚本**只报告，不执行**。这一点没有例外。
+Install-time scripts are **reported only, never executed.** There are no exceptions to this.
 
-而且这里必须区分两类脚本，因为它们的威胁模型完全不同：
+And the two kinds of scripts must be told apart, because their threat models are completely different:
 
-| 类别 | 脚本 | 在谁的机器上跑 | 权重 |
+| Category | Scripts | Runs on whose machine | Weight |
 |---|---|---|---|
-| **消费端** | `preinstall` / `install` / `postinstall` | **使用者** `npm install` 时自动执行 | −20（risk） |
-| **维护端** | `prepare` / `prepublishOnly` | 维护者自己的构建/发布流程 | −1（info，仅披露） |
+| **Consumer side** | `preinstall` / `install` / `postinstall` | the **user's** machine, auto-run on `npm install` | −20 (risk) |
+| **Maintainer side** | `prepare` / `prepublishOnly` | the maintainer's own build/release flow | −1 (info, disclosure only) |
 
-一开始把两者混为一谈，结果是**几乎每个 TypeScript 包**都被判高危。实测在官方的 `@modelcontextprotocol/server-everything` 上，光这一个混淆就吃掉 20 分，把 MCP 项目自己的参考实现从 `usable` 压到 `caution`（50/100，exit 1）。`prepare` 是 TypeScript 项目的标准构建步骤，它不在使用者安装时执行，所以不是消费端执行面。拆开之后同一服务器回到 74/100、exit 0。
+Confusing the two at the start meant **nearly every TypeScript package** was graded high-risk. Measured on the official `@modelcontextprotocol/server-everything`, this one confusion alone ate 20 points, dragging the MCP project's own reference implementation from `usable` to `caution` (50/100, exit 1). `prepare` is a standard build step for TypeScript projects; it does not run during the consumer's install, so it is not a consumer-side execution surface. Once separated, the same server returns to 74/100, exit 0.
 
-### 3. 把差距写成报告
+### 3. Write the gap up as a report
 
-报告固定分三段：
+The report always has three sections:
 
 ```
-一、事实      可复现的观测，谁跑都一样
-二、判断      基于上面事实的结论，可以不同意
-三、没测什么  无条件打印
+1. Facts       reproducible observations, same for whoever runs it
+2. Judgment    conclusions drawn from the facts above; you may disagree
+3. Untested    printed unconditionally
 ```
 
-第三段**永远打印**，哪怕分数满分。
+The third section is **always printed**, even at a perfect score.
 
 ---
 
-## 为什么失败模式必须可区分
+## Why failure modes must be distinguishable
 
-这是本工具最重要的工程决定。
+This is the most important engineering decision in the tool.
 
-探测一个服务器会怎么失败？实践中大多数失败**不是协议错误**，而是挂起、崩溃、输出根本不是 JSON。一个统一的「failed」标签会把最有用的信息抹掉——因为「它挂住了」和「它立刻就退了」指向完全不同的修法。
+How does probing a server fail? In practice most failures are **not protocol errors** — they hang, crash, or emit something that isn't JSON. A single "failed" label would erase the most useful information, because "it hung" and "it exited immediately" point to completely different fixes.
 
-所以探测结果有 7 种状态，每种都是独立标签：
+So probe results have 7 states, each an independent label:
 
-| 状态 | 含义 | 通常意味着 |
+| State | Meaning | Usually means |
 |---|---|---|
-| `ok` | 握手完成 | 可用 |
-| `no-handshake` | 启动了，但 `initialize` 没有合法响应 | 协议实现不对；客户端接不上 |
-| `no-tools` | 握手正常，但 0 个工具 | 宣称的能力不存在 |
-| `crash` | 响应完成前自行退出 | 缺环境变量、缺依赖、启动即崩 |
-| `timeout` | 没退出，也没回答 | 死锁、等输入、阻塞 |
-| `not-json` | stdout 不是合法协议帧 | 往协议通道里打了日志/banner |
-| `spawn-error` | 进程根本没能拉起来 | 二进制不存在、路径错、权限不对 |
+| `ok` | handshake completed | usable |
+| `no-handshake` | started, but `initialize` got no valid response | broken protocol implementation; clients can't connect |
+| `no-tools` | handshake OK, but 0 tools | claimed capability doesn't exist |
+| `crash` | exited on its own before the response completed | missing env var, missing dep, dies at startup |
+| `timeout` | neither exited nor answered | deadlock, waiting for input, blocked |
+| `not-json` | stdout isn't a valid protocol frame | logging/banner dumped into the protocol channel |
+| `spawn-error` | the process never came up at all | binary missing, bad path, wrong permissions |
 
-**`crash` 和 `spawn-error` 必须分开**，而且这里踩过一个真实的坑：在 Windows 上，当二进制不存在时，Node 仍然会往 `child.exitCode` 里塞一个错误码（实测 `-4058`，即 `ENOENT`）。如果照直读那个值，一个「命令写错了」会被报成「服务器崩溃了」——修法完全不同。所以本工具把启动失败**锁存**下来，任何下游观测都不能覆盖它，并且把 `exitCode` 归零为 `null`（一个从未存在过的进程没有退出码）。
+**`crash` and `spawn-error` must be separated**, and there's a real trap here: on Windows, when the binary is missing, Node still stuffs an error code into `child.exitCode` (measured `-4058`, i.e. `ENOENT`). If you read that value at face value, a "wrong command typed" gets reported as "server crashed" — a completely different fix. So the tool **latches** the startup failure: no downstream observation can overwrite it, and it zeroes `exitCode` to `null` (a process that never existed has no exit code).
 
 ---
 
-## 计时要量的是服务器，不是 npm
+## Time the server, not npm
 
-这一节记录一次**被实测推翻的假设**，因为推翻的过程本身说明了「先测再改」为什么重要。
+This section records a hypothesis that **measurement disproved**, because the process of disproving it shows why "measure before you change" matters.
 
-### 问题是：谁在为启动买单
+### The question: who pays for startup
 
-本工具主要通过 `npx` 启动目标。曾观察到同一个服务器经 npm 启动要 3.3 秒，直接 `node` 启动只要 0.24 秒。如果拿墙钟（`elapsedMs`）去判断服务器快慢，那 3 秒其实是 **npm 的启动开销**，却被记在了服务器账上——而评分里有一条「握手很快 +4」，`npm` 启动的服务器永远拿不到，`healthy` 档事实上对最常被安装的那批服务器不可达。
+This tool mostly launches the target via `npx`. We once observed the same server take 3.3 seconds to start via npm but only 0.24 seconds via `node`. If you judge a server's speed from the wall clock (`elapsedMs`), those 3 seconds are really **npm's startup overhead**, yet they get charged to the server — and since the scoring has a "fast handshake +4" rule, a server started via `npm` can never earn it, making the `healthy` band effectively unreachable for the most-installed servers.
 
-### 第一个假设，以及它为什么错了
+### The first hypothesis, and why it was wrong
 
-假设：npm 的开销发生在**我们写入 `initialize` 之前**，所以只要在写入的那一刻开始计时，就能把 npm 排除掉。
+Hypothesis: npm's overhead happens **before we write `initialize`**, so if we start the timer at the moment of writing, we exclude npm.
 
-于是给探针加了 `requestWrittenAt`，从写入时刻算到响应。实测（`npx -y @modelcontextprotocol/server-sequential-thinking`）：
-
-```
-     21ms  spawn 返回
-    139ms  initialize 已写入
-   5963ms  响应到达
-```
-
-写入确实发生在 139ms，响应在 5963ms。filesystem 服务器更清楚——它自己的启动横幅出现在 4864ms，响应在 4881ms。
-
-**结论：假设错了。** npm 的引导不是「写入之前的前奏」，我们的写入被缓冲进了它的启动过程，整段开销都落在这一轮往返里面。所以「从写入开始计时」和「量墙钟」得到的是同一个数字（实测 12098ms vs 12144ms），什么都没修好。
-
-### 正确的做法：按启动路径做算术
-
-唯一可靠的分界线是**启动方式**。同一个构建产物，两种启动方式各跑三次：
+So we added `requestWrittenAt` to the probe, timing from write to response. Measured (`npx -y @modelcontextprotocol/server-sequential-thinking`):
 
 ```
-经 npx -y <pkg>     3445, 3399, 3502ms   平均 3449ms
-经 node <同一个文件>  777,  717,  741ms   平均  745ms
-                                     差        2704ms
+     21ms  spawn returns
+    139ms  initialize written
+   5963ms  response arrives
 ```
 
-这 2704ms 是 npm，不是服务器，而且**每次启动都要付一遍**（冷启动 3544ms vs 热启动 3552ms，说明是引导开销而非下载）。
+The write does happen at 139ms; the response at 5963ms. The filesystem server is clearer — its startup banner appears at 4864ms, the response at 4881ms.
 
-所以探针现在报两个数：
+**Conclusion: the hypothesis was wrong.** npm's bootstrap isn't a "prelude before the write"; our write is buffered into its startup, and the whole overhead lands inside that one round trip. So "timing from the write" and "timing the wall clock" give the same number (measured 12098ms vs 12144ms) — nothing fixed.
 
-| 字段 | 含义 | 是否参与评分 |
+### The right fix: arithmetic by launch path
+
+The only reliable dividing line is the **launch method**. Same build artifact, three runs each of two launch methods:
+
+```
+via npx -y <pkg>     3445, 3399, 3502ms   avg 3449ms
+via node <same file>  777,  717,  741ms   avg  745ms
+                                     diff       2704ms
+```
+
+That 2704ms is npm, not the server — and it's **paid on every launch** (cold start 3544ms vs warm start 3552ms, showing it's bootstrap overhead, not download).
+
+So the probe now reports three numbers:
+
+| Field | Meaning | Counts toward score |
 |---|---|---|
-| `elapsedMs` | 墙钟，含我们这边的启动开销 | 否 |
-| `launcherMs` | 归给 npm/npx 的部分（常量 2500ms，向下取整以免过度扣减） | — |
-| `serverMs` | `elapsedMs − launcherMs`（仅在确实用了启动器时扣） | **是** |
+| `elapsedMs` | wall clock, including our own startup overhead | no |
+| `launcherMs` | the part charged to npm/npx (constant 2500ms, floored to avoid over-penalizing) | — |
+| `serverMs` | `elapsedMs − launcherMs` (only deducted when a launcher was actually used) | **yes** |
 
-常量 2500 无法在单次运行中测出来（两段开销交叠在一起，没有带内信号能分开），所以它来自上面那组对照实验。**校验方法**：同一个服务器分别经 npm 和经 node 启动，`serverMs` 相差仅 **122ms**（659 vs 781）——说明这个常量是公允的。
+The constant 2500 can't be measured in a single run (the two overheads overlap, no in-band signal separates them), so it comes from the comparison experiment above. **Validation:** the same server launched via npm vs via node differs by only **122ms** in `serverMs` (659 vs 781) — showing the constant is fair.
 
-### 单次采样不够，所以有了 `--repeat`
+### One sample isn't enough, so there's `--repeat`
 
-三次采样的离散度很大：同一个服务器从 585ms 到 1630ms 都有。拿单次结果下判断，下一次运行就可能翻盘。
+The spread across three samples is large: the same server ranges from 585ms to 1630ms. Decide from a single result and the next run may flip on you.
 
-所以加了 `--repeat <次数>`（默认 1，最多 10）。多次运行时取**最小值**而非平均——噪声是单边的：机器繁忙只会**增加**延迟，不会减少，所以最快的那次最接近服务器的真实成本，取平均反而会把我们自己的调度抖动算进服务器头上。
+So `--repeat <n>` was added (default 1, max 10). With multiple runs we take the **minimum**, not the average — noise is one-sided: a busy machine only **increases** latency, never decreases, so the fastest run is closest to the server's true cost; averaging would instead charge our own scheduler jitter to the server.
 
-阈值也随之分档：只有 1 次采样时，必须明显低于界线才给「握手很快」（否则下次运行就翻）；有 3 次以上采样时，最小值就是可信估计，按实给分。报告的措辞也跟着改——单次采样就写「单次采样」，多次就写「3 次取最快」，**不假装单次采样能撑起精确结论**。
+The threshold bands follow: with only 1 sample, you must be clearly under the line to get "fast handshake" (otherwise the next run flips); with 3+ samples, the minimum is a trustworthy estimate and scores accordingly. The report's wording changes too — single sample says "single sample," multiple says "3 runs, fastest taken," and it **never pretends a single sample can support a precise conclusion**.
 
-### 结果
+### The result
 
-修好之后，四个官方服务器（`--repeat 3`）：
+After the fix, four official servers (`--repeat 3`):
 
-| 服务器 | 3 次采样（`serverMs`） | 取最快 | 结论 |
+| Server | 3 samples (`serverMs`) | Fastest | Verdict |
 |---|---|---|---|
-| server-memory | 644 / 617 / 602 | 602ms | **健康 81** |
-| server-sequential-thinking | 692 / 642 / 609 | 609ms | **健康 81** |
-| server-filesystem | 1254 / 988 / 687 | 687ms | 可用 78 |
-| server-everything | 1539 / 966 / 808 | 808ms | 可用 78 |
+| server-memory | 644 / 617 / 602 | 602ms | **healthy 81** |
+| server-sequential-thinking | 692 / 642 / 609 | 609ms | **healthy 81** |
+| server-filesystem | 1254 / 988 / 687 | 687ms | usable 78 |
+| server-everything | 1539 / 966 / 808 | 808ms | usable 78 |
 
-修之前四个全部卡在 69–77 的「可用」档。这是**第一次有真实服务器拿到「健康」**——而能拿到，只是因为采样揭示了它们真实成本约 600ms，之前那些 1500ms+ 的单次数字多半是我们自己的噪声。
+Before the fix, all four were stuck in the 69–77 "usable" band. This was the **first time a real server earned "healthy"** — and it only could because sampling revealed their true cost is ~600ms; most of those 1500ms+ single numbers earlier were our own noise.
 
 ---
 
-## 信任评分怎么算
+## How the trust score is computed
 
-分数是一个**可手算核对**的量，不是黑箱：
+The score is a quantity you can **hand-check**, not a black box:
 
 ```
-总分 = 60（中性起点："两个方向都没观察到"）
-     + 所有命中的信号权重
-     然后夹到 [0, 100]
+total = 60 (neutral starting point: "saw nothing in either direction")
+      + sum of all matched signal weights
+      then clamped to [0, 100]
 ```
 
-权重表集中在 `lib/trust.js` 的 `WEIGHTS` 里，一共 33 项，**放在一处就是为了让人能自己加一遍**。几项主要的：
+The weight table lives in one place, `WEIGHTS` in `lib/trust.js`, 33 entries total, **kept in one spot so anyone can add it up themselves**. The main ones:
 
-| 信号 | 权重 |
+| Signal | Weight |
 |---|---|
-| `probe.spawn-error`（起不来） | −50 |
-| `probe.no-handshake`（接不上） | −45 |
-| `probe.crash`（崩溃） | −40 |
-| `instructions.injection-shaped`（全局指令里有注入形状） | −35 |
-| `probe.timeout`（卡死） | −30 |
-| `tool-count.claimed-mismatch-large`（宣称与实测工具数大幅不符） | −28 |
-| `claims.install-hooks`（有**消费端**安装期脚本） | −20 |
-| `tool.dangerous-description`（工具描述含可疑措辞） | −18 |
-| `claims.maintainer-hooks`（有维护端脚本，仅披露） | −1 |
-| `good.recent-release`（近期有发版） | +8 |
-| `good.tools-match`（宣称与实测一致） | +6 |
+| `probe.spawn-error` (can't start) | −50 |
+| `probe.no-handshake` (can't connect) | −45 |
+| `probe.crash` (crashes) | −40 |
+| `instructions.injection-shaped` (global instructions have an injection shape) | −35 |
+| `probe.timeout` (hangs) | −30 |
+| `tool-count.claimed-mismatch-large` (claimed vs measured tool count widely off) | −28 |
+| `claims.install-hooks` (has **consumer-side** install script) | −20 |
+| `tool.dangerous-description` (tool description has suspicious phrasing) | −18 |
+| `claims.maintainer-hooks` (has maintainer-side script, disclosure only) | −1 |
+| `good.recent-release` (released recently) | +8 |
+| `good.tools-match` (claimed matches measured) | +6 |
 
-对应五个档位：
+The five bands:
 
-| 档位 | 条件 |
+| Band | Condition |
 |---|---|
-| 健康 | 实测通过，分数 ≥ 80 |
-| 可用（有需留意项） | 实测通过，分数 ≥ 60 |
-| 需谨慎 | 分数 ≥ 35，或握手正常但 0 工具 |
-| 不建议使用 | 分数 < 35 |
-| 无法使用 | 探测未能成立 |
+| healthy | passed probing, score ≥ 80 |
+| usable (with items to note) | passed probing, score ≥ 60 |
+| caution | score ≥ 35, or handshake OK but 0 tools |
+| not recommended | score < 35 |
+| unusable | probing could not be established |
 
-**几条刻意的设计取舍：**
+**A few deliberate design trade-offs:**
 
-- **没跑过探测就不给自信的分。** `--offline` 模式固定落在「可用」档，因为纯靠元数据得不出运行时结论。报告会明说「只做了静态检查（未连接服务器）」。
-- **元数据没读到就不扣分。** 早期版本对「没有仓库地址」「没有 MCP 标记」扣分，但当目标是**一个裸脚本路径**时，它本来就没有 `package.json`——那是我们输入的问题，不是服务器的问题。为自己的检查没跑成而惩罚对方，正是本工具要防的那种无根据判断，所以它自己不能犯。这个 bug 被实测抓出来了（干净服务器分数从 59 修正到 67）。
-- **不用「零证据=高分」的方式判干净。** 中性起点 60，只靠正面观测往上加。
+- **No confident score without a probe.** `--offline` mode is fixed to the "usable" band, because metadata alone yields no runtime conclusion. The report says so explicitly: "static checks only (no server connection)."
+- **No penalty when metadata isn't found.** Early versions penalized "no repo URL" / "no MCP marker," but when the target is **a bare script path**, it has no `package.json` to begin with — that's our input problem, not the server's. Penalizing the other side because our own check didn't run is exactly the kind of unfounded judgment this tool guards against, so it must not do it itself. This bug was caught by measurement (a clean server's score went from 59 to 67).
+- **Never judges "clean" by "zero evidence = high score."** Neutral start at 60, raised only by positive observations.
 
 ---
 
-## Windows 上为什么不能直接 spawn `npx`
+## Why you can't spawn `npx` directly on Windows
 
-第一次拿真实包测试时，本工具在 Windows 上**一个真实服务器都测不了**：静态声明读得好好的（抓到了真实 npm 元数据），但探测一律返回 `spawn-error: spawn npx ENOENT`。
+On the first test against a real package, this tool **could not test a single real server** on Windows: static declarations read fine (it caught real npm metadata), but probing always returned `spawn-error: spawn npx ENOENT`.
 
-逐项起真实进程验证后，原因是这样：
+After verifying each step with a real process, here's why:
 
-| 尝试 | 结果 |
+| Attempt | Result |
 |---|---|
-| `spawn("npx")` 无 shell | `ENOENT` —— PATH 上只有 `npx.cmd`，没有无扩展名的可执行文件 |
-| `spawn("npx.cmd")` 无 shell | `EINVAL` —— Windows 加固后拒绝无 shell 直接 exec `.cmd` |
-| `spawn("npx", {shell:true})` | 可行，但会把 shell 引号/注入风险重新引进来 |
+| `spawn("npx")` no shell | `ENOENT` — only `npx.cmd` is on PATH, no extensionless executable |
+| `spawn("npx.cmd")` no shell | `EINVAL` — hardened Windows refuses to exec `.cmd` directly without a shell |
+| `spawn("npx", {shell:true})` | works, but re-introduces shell quoting/injection risk |
 
-解法是**绕开 shell，也绕开 `.cmd` 包装**：定位 npm 自己的 CLI 入口脚本（`node_modules/npm/bin/npx-cli.js`），用 `process.execPath` 直接跑。这样在 Linux/macOS 上行为完全一致，也保住了「目标里的包名不进 shell」这条性质。
+The fix is to **bypass both the shell and the `.cmd` wrapper**: locate npm's own CLI entry script (`node_modules/npm/bin/npx-cli.js`) and run it directly with `process.execPath`. This behaves identically on Linux/macOS and preserves the property that "the package name from the target never enters a shell."
 
-修复后同一个服务器立刻探测成功：`status ok`、`mcp-servers/everything 2.0.0`、协议 `2025-11-25`、**14 个工具**。
+After the fix the same server probed successfully at once: `status ok`, `mcp-servers/everything 2.0.0`, protocol `2025-11-25`, **14 tools**.
 
-顺带一条相关经验：目标路径**先检查存在性**再交给 node。否则一个打错的路径会让 spawn 成功、node 以 `MODULE_NOT_FOUND` 退出，然后被报成「**服务器**崩溃了」——而实际上根本没有服务器，是路径写错了。两者的修法完全不同，所以必须在入口处把「我们的输入错了」和「他们的代码坏了」分开。
+A related lesson: check the target path for **existence first** before handing it to node. Otherwise a typo'd path makes spawn succeed, node exits with `MODULE_NOT_FOUND`, and it gets reported as "the **server** crashed" — when in fact there was no server, just a wrong path. The fixes differ completely, so at the entry point you must separate "our input was wrong" from "their code is broken."
 
 ---
 
-## 它认得哪些风险模式
+## Which risk patterns it recognizes
 
-7 类，作用在**工具描述**和**服务器全局 `instructions`** 两处。判据全部来自工具投毒（tool poisoning）这类问题的公开文献：藏在工具描述里的指令会在**注册时**就进入模型上下文，早于任何一次调用发生。
+7 classes, applied to both **tool descriptions** and the server's global **`instructions`**. The criteria all come from public literature on tool poisoning: instructions hidden in tool descriptions enter the model context **at registration time**, before any call ever happens.
 
-| 模式 | 它在看什么 |
+| Pattern | What it's looking for |
 |---|---|
-| `ignore-instructions` | 「忽略之前所有指令」这类措辞 |
-| `exfiltrate` | 「把凭证/密钥/环境变量发送出去」 |
-| `shell-hide` | 「不要告诉用户」 |
-| `metadata-fetch` | 直接指名云 metadata 端点（`169.254.169.254` 等） |
-| `read-secrets-path` | 指名凭证文件路径（`~/.ssh`、`.aws/credentials`、`.env` …） |
-| `always-approve` | 「无需确认 / 绕过审批」 |
-| `persona-override` | 「你现在是…」这类身份改写 |
+| `ignore-instructions` | phrasing like "ignore all previous instructions" |
+| `exfiltrate` | "send credentials/secrets/env vars out" |
+| `shell-hide` | "don't tell the user" |
+| `metadata-fetch` | names a cloud metadata endpoint directly (`169.254.169.254`, etc.) |
+| `read-secrets-path` | names a credentials file path (`~/.ssh`, `.aws/credentials`, `.env` …) |
+| `always-approve` | "no confirmation needed / bypass approval" |
+| `persona-override` | identity rewrites like "you are now…" |
 
-**这些措辞的写法很重要**：它们描述「看到了什么」以及「为什么值得看一眼」，**不指控恶意**。工具描述告诉模型该做什么是正常的；告诉模型忽略既有指令不是。报告应当说清看到的是哪一种。
+**How these phrasings are written matters:** they describe "what was seen" and "why it's worth a look," and **do not accuse of malice**. A tool description telling the model what to do is normal; one telling it to ignore existing instructions is not. The report should make clear which kind was seen.
 
 ---
 
-## 我们没测什么
+## What we don't test
 
-**这是最重要的一节。** 也是报告里无条件打印的那一段。
+**This is the most important section.** It's also the one printed unconditionally in the report.
 
-| 没测的东西 | 为什么 |
+| What's not tested | Why |
 |---|---|
-| **工具被真正调用时的行为** | 本工具只做握手和 `tools/list`，不执行任何工具。一个服务器可以在不被调用时完全规矩，而在工具被调用时读取不该读的文件——这正是间接提示注入的常见形态。 |
-| **依赖包内部的代码** | 只统计了依赖数量，没有审查依赖内容。供应链风险往往藏在传递依赖里。 |
-| **运行时网络行为** | 没有监控服务器运行时会连向哪些地址。一个服务器可以在握手阶段安静，在工具调用时外联。 |
-| **运行时文件系统访问** | 只读了 `package.json` 和 `README`，没有观察服务器运行期间实际打开了哪些文件。 |
-| **工具返回内容中的注入** | 工具返回值里的注入内容只有真正调用时才会出现。这类检测需要运行时网关，静态检查看不到（这正是 `mcp-sentry` 那类工具的职责）。 |
-| **源代码质量与逻辑正确性** | 没有阅读实现代码。一个没有安全问题的服务器仍可能功能是错的。 |
+| **Behavior when tools are actually called** | The tool only does the handshake and `tools/list`; it executes no tool. A server can be perfectly well-behaved when not called, yet read files it shouldn't when a tool is called — exactly the common shape of indirect prompt injection. |
+| **Code inside dependencies** | Only the dependency count is tallied, not their contents reviewed. Supply-chain risk often hides in transitive dependencies. |
+| **Runtime network behavior** | No monitoring of which addresses the server connects to at runtime. A server can stay quiet during handshake and phone home on tool call. |
+| **Runtime filesystem access** | Only `package.json` and the `README` were read; no observation of which files the server actually opened while running. |
+| **Injection in tool return content** | Injection inside tool return values only appears when the tool is truly called. Detecting it needs a runtime gateway; static checks can't see it (that's exactly the job of tools like `mcp-sentry`). |
+| **Source-code quality and logic correctness** | The implementation code was not read. A server with no security issues can still be functionally wrong. |
 
-**换成一句话：没发现问题，只代表它通过了上面有限几项检查，不代表它是安全的。**
+**In one sentence: finding no problem only means it passed the limited checks above — it does not mean it's safe.**
 
-想在任何时候查看这份清单（不需要给目标）：
+To view this list any time (no target needed):
 
 ```bash
 npx mcp-server-inspector --coverage
@@ -268,56 +270,56 @@ npx mcp-server-inspector --coverage
 
 ---
 
-## 装上与用法
+## Install and usage
 
 ```bash
-# 一次性运行，不安装
-npx mcp-server-inspector <目标>
+# run once, no install
+npx mcp-server-inspector <target>
 
-# 或装到全局
+# or install globally
 npm install -g mcp-server-inspector
-mcpx <目标>
+mcpx <target>
 ```
 
-零依赖。只需要 Node ≥ 20。没有配置文件、没有守护进程、没有状态——一个「装之前跑一次」的工具，不该要求你先配置点什么。
+Zero dependencies. Only needs Node ≥ 20. No config file, no daemon, no state — a "run it once before installing" tool shouldn't require you to configure anything first.
 
-### 目标写法
+### Target syntax
 
 ```bash
-mcpx @modelcontextprotocol/server-filesystem       # npm 包名 → 自动走 npx
-mcpx ./my-mcp-server                                # 本地目录
-mcpx "npx -y some-mcp-server --flag"                # 完整命令行
-mcpx ./dist/server.js                               # 本地脚本 → 用 node 拉起
+mcpx @modelcontextprotocol/server-filesystem       # npm package name → auto via npx
+mcpx ./my-mcp-server                                # local directory
+mcpx "npx -y some-mcp-server --flag"                # full command line
+mcpx ./dist/server.js                               # local script → launched with node
 ```
 
-两条刻意的行为：
+Two deliberate behaviors:
 
-- **显式写出的调用方式原样保留。** 早期版本会把 `npx -y pkg` 重新包一次，生成 `npx -y npx -y pkg`——已经修掉了。
-- **本地路径不存在会当场报错**，而不是交给 node 去跑。否则你会看到一个「服务器崩溃」的诊断，附带 `MODULE_NOT_FOUND`——那个诊断是错的：根本没有服务器，是路径写错了。报告会明确写成「探测目标不存在（输入问题，不是服务器问题）」，不让自己的输入错误算到对方头上。
+- **An explicitly written invocation is preserved verbatim.** Early versions re-wrapped `npx -y pkg` into `npx -y npx -y pkg` — that's fixed.
+- **A missing local path errors on the spot**, rather than being handed to node. Otherwise you'd see a "server crashed" diagnosis with `MODULE_NOT_FOUND` — a wrong diagnosis: there's no server, just a wrong path. The report explicitly says "probe target does not exist (input problem, not a server problem)," so our own input error isn't charged to the other side.
 
-### 选项
+### Options
 
-| 选项 | 作用 |
+| Option | Effect |
 |---|---|
-| `--offline` | 不连接服务器，只做静态检查（快，但看不到运行时真相） |
-| `--timeout <毫秒>` | 探测超时，默认 `15000` |
-| `--repeat <次数>` | 重复探测几次、取最快的一次做耗时判断（默认 `1`，最多 `10`）。单次计时有噪声，在意耗时结论时用 `3` |
-| `--json` | 输出 JSON（含 `coverage` 覆盖范围说明），适合接 CI |
-| `--quiet` | 不打印进度提示 |
-| `--coverage` | 单独打印「会检查 / 不会检查」两份清单 |
-| `-h, --help` / `-v, --version` | 帮助 / 版本 |
+| `--offline` | don't connect to the server; static checks only (fast, but no runtime truth) |
+| `--timeout <ms>` | probe timeout, default `15000` |
+| `--repeat <n>` | repeat the probe a few times and use the fastest for the timing verdict (default `1`, max `10`). Single-sample timing is noisy; use `3` if the timing verdict matters |
+| `--json` | output JSON (includes the `coverage` coverage note), good for CI |
+| `--quiet` | suppress progress messages |
+| `--coverage` | print the "tested / not tested" lists on their own |
+| `-h, --help` / `-v, --version` | help / version |
 
-### 退出码
+### Exit codes
 
-| 码 | 含义 |
+| Code | Meaning |
 |---|---|
-| `0` | 健康 / 可用 |
-| `1` | 需谨慎 / 不建议 / 无法使用 |
-| `2` | 用法错误 |
+| `0` | healthy / usable |
+| `1` | caution / not recommended / unusable |
+| `2` | usage error |
 
 ---
 
-## 在代码里用
+## Use it in code
 
 ```js
 import { inspect } from "mcp-server-inspector";
@@ -328,21 +330,21 @@ const r = await inspect("@modelcontextprotocol/server-filesystem", {
 
 console.log(r.trust.band, r.trust.score);   // "healthy" 82
 console.log(r.probe.status);                // "ok"
-console.log(r.probe.toolCount);             // 14（翻页翻完的真实数量）
-console.log(r.claims.installScripts);       // []（只报告，不执行）
-console.log(r.trust.untested.length);       // 6（永远存在的诚实清单）
+console.log(r.probe.toolCount);             // 14 (real count after full pagination)
+console.log(r.claims.installScripts);       // [] (reported only, not executed)
+console.log(r.trust.untested.length);       // 6 (the honesty list that always exists)
 ```
 
-也可以只取需要的部分：
+You can also take just the part you need:
 
 ```js
-import { probe } from "mcp-server-inspector/probe";     // 只做真连探测
-import { claimsFor } from "mcp-server-inspector/claims"; // 只读静态元数据
-import { assess } from "mcp-server-inspector/trust";     // 只做评分
+import { probe } from "mcp-server-inspector/probe";     // do the real-connect probe only
+import { claimsFor } from "mcp-server-inspector/claims"; // read static metadata only
+import { assess } from "mcp-server-inspector/trust";     // scoring only
 import { render, toJson } from "mcp-server-inspector/report";
 ```
 
-### JSON 输出结构
+### JSON output structure
 
 ```json
 {
@@ -357,62 +359,63 @@ import { render, toJson } from "mcp-server-inspector/report";
   "coverage": {
     "tested":    [ "…" ],
     "notTested": [ { "id": "…", "title": "…", "why": "…" } ],
-    "disclaimer": "未发现问题 ≠ 安全。…"
+    "disclaimer": "No problems found ≠ safe.…"
   }
 }
 ```
 
-**`--offline` 模式下 `runtime` 是 `null`**，不是空对象——因为确实没有运行时观测可报。消费这份 JSON 时请显式处理这种情形：
+**Under `--offline`, `runtime` is `null`**, not an empty object — because there genuinely is no runtime observation to report. Consumers of this JSON should handle that case explicitly:
 
 ```json
 { "probed": false, "runtime": null, "verdict": { "band": "usable" } }
 ```
 
-`coverage.notTested` 和 `coverage.disclaimer` **始终存在**，包括一切正常的时候、也包括 `runtime` 为 `null` 的时候。任何消费这份 JSON 的地方都应该把它传下去。
+`coverage.notTested` and `coverage.disclaimer` **are always present**, including when everything is fine, and including when `runtime` is `null`. Anything consuming this JSON should pass them through.
 
 ---
 
-## 开发
+## Development
 
 ```bash
 npm test        # → node test/inspect.js
 ```
 
-测试有 290 项断言，分 10 节。几处刻意的做法：
+The tests have 290 assertions across 10 sections. A few deliberate practices:
 
-- **测试起真实子进程，不 mock `child_process`。** `test/fixtures/` 里有两个真实服务器：`good-server.js` 是符合规范的实现（可用 argv 切换：`--tools N`、`--paginate N`、`--instructions`、`--poisoned`、`--no-description`、`--no-schema`、`--no-annotations`）；`broken-server.js` 有 8 种故意坏法（`silent` / `crash` / `garbage` / `banner` / `empty` / `noresult` / `stagger` / `partial`）。
-- **不变量式断言。** 比如「每条 finding 都必须带解释」「分数必须等于 60 加权重和」「没跑探测时不得出现运行时 finding」「报告必须无条件打印第三节」「直接启动的服务器不得被授予它没付过的启动器折扣」「崩溃的服务器既不该得到计时加分、也不该被额外判处计时减分」。这类断言抓到的 bug 比逐条对输出的多。
-- **`partial` 模式把一帧拆成两次写**，用来证明组帧逻辑不假设「一个 data 事件 = 一条消息」——本地这么假设能跑，有负载时会挂。- **5b 节专门锁死计时隔离。** 它会回归失败如果：npm 启动的服务器因为别人的开销而丢分、直接启动与经 npm 启动的同一服务器分数不一致、被扣减后的 `serverMs` 为负或超过墙钟、单次采样的临界值贸然给分、或者采样次数没有被如实标注。
-- **断言一个现象，就必须把那个现象放进数据里。** 这里犯过一次：测「维护端脚本只扣 1 分」时用替换而非追加构造 `flags`，顺手把两个正面信号（`good.recent-release`、`good.multi-maintainer`）也丢了，于是差值是 13 而不是 1——**看起来像代码错了，实际是测试写错了**。逐项打印权重才定位到。先怀疑代码、再怀疑测试期望，但两者都要真查。
+- **The tests launch real child processes; `child_process` is never mocked.** `test/fixtures/` has two real servers: `good-server.js` is a spec-compliant implementation (toggles via argv: `--tools N`, `--paginate N`, `--instructions`, `--poisoned`, `--no-description`, `--no-schema`, `--no-annotations`); `broken-server.js` has 8 deliberately broken modes (`silent` / `crash` / `garbage` / `banner` / `empty` / `noresult` / `stagger` / `partial`).
+- **Invariant-style assertions.** E.g. "every finding must carry an explanation," "the score must equal 60 plus the weight sum," "no runtime finding may appear when no probe ran," "the report must print section 3 unconditionally," "a server launched directly must not be granted the launcher discount it didn't pay for," "a crashed server must get neither a timing bonus nor an extra timing penalty." These assertions catch more bugs than line-by-line output diffs.
+- **The `partial` mode splits one frame into two writes**, to prove the framing logic doesn't assume "one `data` event = one message" — a safe local assumption that breaks under load.
+- **Section 5b specifically locks down timing isolation.** It regresses if: a server launched via npm loses points for someone else's overhead, the same server launched directly vs via npm scores inconsistently, the deducted `serverMs` goes negative or exceeds the wall clock, a single sample is given a borderline score on a whim, or the sample count isn't labeled truthfully.
+- **Assert a phenomenon and you must put that phenomenon in the data.** We got this wrong once: testing "maintainer-side script only costs 1" by replacing rather than appending to `flags` also silently dropped two positive signals (`good.recent-release`, `good.multi-maintainer`), so the delta was 13 instead of 1 — **it looked like a code bug, but the test was wrong.** Printing the weights line by line is what located it. Suspect the code first, then suspect the test's expectations — but check both for real.
 
-零依赖 ESM + JSDoc 类型标注（`// @ts-check`）。
-
----
-
-## 诚实的边界（再说一次）
-
-`mcp-server-inspector` 是**准入前的最低限度体检**，不是安全审计，不是质量认证，不是代码审查。
-
-- **通过 ≠ 安全。** 只说明没有在握手和工具声明阶段观察到明显问题。
-- **工具数量 ≠ 能力。** 14 个工具不代表能做 14 件事，也不代表做得好。
-- **活着 ≠ 好。** 一个服务器能顺利握手，仍可能功能全错。
-- **评分是启发式，不是测量。** 权重是我们选的，公开可查、可手算、可以不同意。它排序「值得看一眼的程度」，不量化「安全性」。
-
-这个工具的价值不在于给出一个分数，而在于**把「我知道什么」和「我不知道什么」分开写清楚**。如果这一点做到了，它就有用。
+Zero-dependency ESM with JSDoc type annotations (`// @ts-check`).
 
 ---
 
-## 生态数据与出处
+## Honest boundaries (again)
 
-上面引用的生态规模，出处如下，可自行核对：
+`mcp-server-inspector` is a **minimum pre-admission health check**, not a security audit, not a quality certification, not a code review.
 
-- **MCP 服务器数量：138,000+**，来自 MCP 官方 Registry（`registry.modelcontextprotocol.io`）。官方 `modelcontextprotocol/servers` 仓库的第三方列表已被该 Registry 取代。
-- **该数量靠人工筛选分类**——2026 年的生态参考资料把「最近 90 天内有提交」这类判据写进收录标准。十几万个包靠人力筛，说明工具缺口是真实存在的，这也正是本项目立项的依据。
+- **Passing ≠ safe.** It only means no obvious problem was observed during handshake and tool declaration.
+- **Tool count ≠ capability.** 14 tools doesn't mean it can do 14 things, nor that it does them well.
+- **Alive ≠ good.** A server can handshake cleanly and still be functionally wrong.
+- **The score is a heuristic, not a measurement.** The weights are our choice — public, hand-checkable, and disagreeable. It ranks "how much it's worth a look," not "how safe."
 
-关于竞品形态的判断（例如 Apple/macOS 生态的饱和状况）属于调研期的观察，随时间会变，不作为本工具正确性的依据。
+The value of this tool isn't in giving a score; it's in **writing "what I know" and "what I don't know" separately and clearly.** If it does that, it's useful.
 
 ---
 
-## 许可证
+## Ecosystem data and sources
+
+The ecosystem scale cited above comes from the following; verify it yourself:
+
+- **MCP server count: 138,000+**, from the official MCP Registry (`registry.modelcontextprotocol.io`). The third-party list in the official `modelcontextprotocol/servers` repo has been superseded by that Registry.
+- **That count relies on manual screening and categorization** — a 2026 ecosystem reference bakes criteria like "committed within the last 90 days" into its inclusion standard. Hundreds of thousands of packages screened by hand shows the tooling gap is real, which is exactly what this project was started to address.
+
+Judgments about competitor shapes (e.g. the saturation of the Apple/macOS ecosystem) are observations from the research phase; they shift over time and are not taken as grounds for this tool's correctness.
+
+---
+
+## License
 
 MIT
