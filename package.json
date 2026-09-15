@@ -1,6 +1,6 @@
 {
   "name": "mcp-server-inspector",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Health-check any MCP server before you trust it: does it actually run, what does it really expose, how alive is it, and what did we NOT test.",
   "type": "module",
   "license": "MIT",
